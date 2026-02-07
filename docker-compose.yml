@@ -8,7 +8,7 @@ services:
       - ./config.json:/root/.nanobot/config.json
       - ./sessions:/root/.nanobot/sessions
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./nanobot_workspace:/root/.nanobot/workspace
+      - ./nanobot_workspace:/root/.nanobot/workspace # Persist entire workspace (memory, projects, identity)
     environment:
       - PYTHONUNBUFFERED=1
     command: ["gateway"]

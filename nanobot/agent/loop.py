@@ -58,8 +58,8 @@ class AgentLoop:
         self.max_history_messages = max_history_messages
         self.max_history_tokens = max_history_tokens
         # Load agent limits
-        from nanobot.config.loader import ConfigLoader
-        config = ConfigLoader().load()
+        from nanobot.config.loader import load_config
+        config = load_config()
         self.agent_max_tokens = config.agents.defaults.agent_max_tokens
         
         self.brave_api_key = brave_api_key

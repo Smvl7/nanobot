@@ -13,7 +13,6 @@
 ## 🛠 Team Context
 **Role**: Personal Bot Deployment & Development Team.
 **Mission**: Maintain and evolve a personal AI assistant (Nanobot) running on self-hosted infrastructure. We handle code implementation, server configuration, and reliability engineering.
-
 ---
 
 ## 🚀 Nanobot (VPS) [Primary]
@@ -42,11 +41,11 @@ A modular Python-based agent framework designed for autonomy and extensibility.
   - `~/nanobot/config.json`: Configuration & API Keys (Secrets).
 
 ### Deployment Workflow
-Updates are applied directly to the VPS and require a container rebuild to take effect.
-1. **Sync**: Transfer code/config changes to `~/nanobot`.
-2. **Update**: Execute `./update.sh`.
-   - `docker compose build --no-cache`: Rebuilds image with new code.
-   - `docker compose up -d`: Recreates container.
+Updates are automated via GitHub Actions.
+1. **Commit & Push**: Push changes to the `main` branch.
+2. **CI/CD Pipeline**:
+   - **Build**: GitHub Actions builds the Docker image and pushes to GHCR.
+   - **Deploy**: GitHub Actions connects to VPS via SSH and updates the container.
 3. **Verify**: Check logs via `docker logs -f nanobot_agent`.
 
 ### 📡 Server Access & Logs
@@ -57,7 +56,7 @@ Updates are applied directly to the VPS and require a container rebuild to take 
 
 ---
 
-## ☕ Other Agents
+## ☕ Other Agents on this VPS
 
 ### Pupi Coffee Bot
 - **Status**: ✅ Active

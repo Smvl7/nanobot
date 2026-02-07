@@ -1,0 +1,14 @@
+services:
+  nanobot:
+    image: ghcr.io/smvl7/nanobot:latest
+    container_name: nanobot_agent
+    restart: unless-stopped
+    user: root
+    volumes:
+      - ./config.json:/root/.nanobot/config.json
+      - ./sessions:/root/.nanobot/sessions
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./nanobot_workspace:/root/workspace
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: ["gateway"]

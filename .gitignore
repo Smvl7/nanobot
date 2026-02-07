@@ -1,0 +1,27 @@
+.assets
+.env
+*.pyc
+dist/
+build/
+docs/
+*.egg-info/
+*.egg
+*.pyc
+*.pyo
+*.pyd
+*.pyw
+*.pyz
+*.pywz
+*.pyzz
+.venv/
+__pycache__/
+poetry.lock
+.pytest_cache/
+
+# User specific
+config.json
+.ssh/
+.trae/
+.vscode/
+nanobot_workspace/
+logs/

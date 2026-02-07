@@ -3,6 +3,9 @@ name: Deploy to VPS
 on:
   push:
     branches: [ main ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
   workflow_dispatch:
 
 env:

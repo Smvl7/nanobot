@@ -57,6 +57,11 @@ class AgentLoop:
         self.max_iterations = max_iterations
         self.max_history_messages = max_history_messages
         self.max_history_tokens = max_history_tokens
+        # Load agent limits
+        from nanobot.config.loader import ConfigLoader
+        config = ConfigLoader().load()
+        self.agent_max_tokens = config.agents.defaults.agent_max_tokens
+        
         self.brave_api_key = brave_api_key
         self.exec_config = exec_config or ExecToolConfig()
         self.cron_service = cron_service
@@ -164,6 +169,30 @@ class AgentLoop:
         
         # Get or create session
         session = self.sessions.get_or_create(msg.session_key)
+
+        # Check for agent token limit (for autonomous agents/subagents, usually no strict message limit)
+        # We estimate tokens in the entire history
+        from nanobot.utils.helpers import estimate_tokens
+        
+        # Calculate total tokens in session history
+        total_tokens = sum(estimate_tokens(m.get("content", "")) for m in session.messages)
+        
+        if total_tokens > self.agent_max_tokens:
+            logger.warning(f"Session {msg.session_key} exceeded agent token limit ({total_tokens}/{self.agent_max_tokens})")
+            
+            # Send notification to user and stop
+            limit_msg = (
+                f"⚠️ **Context Limit Reached**\n\n"
+                f"I have accumulated **{total_tokens} tokens**, which exceeds the safety limit of {self.agent_max_tokens}.\n\n"
+                f"To prevent context overflow and reduce costs, I have paused execution.\n"
+                f"Please instruct me on how to proceed (e.g., 'summarize history', 'clear memory', or 'continue anyway')."
+            )
+            
+            return OutboundMessage(
+                channel=msg.channel,
+                chat_id=msg.chat_id,
+                content=limit_msg
+            )
         
         # Update tool contexts
         message_tool = self.tools.get("message")

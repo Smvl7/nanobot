@@ -52,8 +52,8 @@ class AgentDefaults(BaseModel):
     workspace: str = "~/.nanobot/workspace"
     model: str = "anthropic/claude-opus-4-5"
     max_tokens: int = 8192
-    max_history_messages: int = 20
-    max_history_tokens: int = 30000
+    max_history_messages: int = 10
+    max_history_tokens: int = 8000
     agent_max_tokens: int = 100000  # High limit for agents/subagents
     temperature: float = 0.7
     max_tool_iterations: int = 20

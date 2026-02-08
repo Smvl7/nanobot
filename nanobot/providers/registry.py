@@ -80,7 +80,17 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         detect_by_base_keyword="openrouter",
         default_api_base="https://openrouter.ai/api/v1",
         strip_model_prefix=False,
-        model_overrides=(),
+        model_overrides=(
+            # Force Google Vertex for Gemini to ensure consistent caching
+            ("gemini", {
+                "extra_body": {
+                    "provider": {
+                        "order": ["GoogleVertex"],
+                        "allow_fallbacks": False
+                    }
+                }
+            }),
+        ),
     ),
 
     # AiHubMix: global gateway, OpenAI-compatible interface.

@@ -306,6 +306,7 @@ class CronService:
         name: str,
         schedule: CronSchedule,
         message: str,
+        kind: str = "agent_turn",
         deliver: bool = False,
         channel: str | None = None,
         to: str | None = None,
@@ -321,7 +322,7 @@ class CronService:
             enabled=True,
             schedule=schedule,
             payload=CronPayload(
-                kind="agent_turn",
+                kind=kind,
                 message=message,
                 deliver=deliver,
                 channel=channel,

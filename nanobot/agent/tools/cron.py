@@ -26,7 +26,7 @@ class CronTool(Tool):
     
     @property
     def description(self) -> str:
-        return "Schedule reminders and recurring tasks. Actions: add, list, remove."
+        return "Schedule tasks. Use 'echo' type for simple text reminders (sent directly to chat). Use 'agent' type for tasks requiring tool use or reasoning (e.g. 'check weather'). Actions: add, list, remove."
     
     @property
     def parameters(self) -> dict[str, Any]:
@@ -37,6 +37,11 @@ class CronTool(Tool):
                     "type": "string",
                     "enum": ["add", "list", "remove"],
                     "description": "Action to perform"
+                },
+                "type": {
+                    "type": "string",
+                    "enum": ["echo", "agent"],
+                    "description": "Job type: 'echo' for reminders (loudspeaker), 'agent' for tasks. Defaults to 'echo'."
                 },
                 "message": {
                     "type": "string",
@@ -75,10 +80,11 @@ class CronTool(Tool):
         at: str | None = None,
         timezone: str | None = None,
         job_id: str | None = None,
+        type: str = "echo",
         **kwargs: Any
     ) -> str:
         if action == "add":
-            return self._add_job(message, every_seconds, cron_expr, at, timezone)
+            return self._add_job(message, every_seconds, cron_expr, at, timezone, type)
         elif action == "list":
             return self._list_jobs()
         elif action == "remove":
@@ -91,7 +97,8 @@ class CronTool(Tool):
         every_seconds: int | None, 
         cron_expr: str | None,
         at: str | None,
-        timezone: str | None
+        timezone: str | None,
+        type: str = "echo"
     ) -> str:
         if not message:
             return "Error: message is required for add"
@@ -128,6 +135,7 @@ class CronTool(Tool):
             name=message[:30],
             schedule=schedule,
             message=message,
+            kind=type,
             deliver=True,
             channel=self._channel,
             to=self._chat_id,
@@ -138,7 +146,7 @@ class CronTool(Tool):
         jobs = self._cron.list_jobs()
         if not jobs:
             return "No scheduled jobs."
-        lines = [f"- {j.name} (id: {j.id}, {j.schedule.kind})" for j in jobs]
+        lines = [f"- {j.name} (id: {j.id}, schedule: {j.schedule.kind}, type: {j.payload.kind})" for j in jobs]
         return "Scheduled jobs:\n" + "\n".join(lines)
     
     def _remove_job(self, job_id: str | None) -> str:

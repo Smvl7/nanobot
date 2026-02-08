@@ -153,7 +153,10 @@ class LiteLLMProvider(LLMProvider):
             # Fallback logic for primary model failure
             # If we are already on a fallback model, don't recurse infinitely
             if "claude-sonnet-4.5" not in model and "claude-3-5-sonnet" not in model:
-                fallback_model = "anthropic/claude-3-5-sonnet-20240620" # Explicit fallback
+                fallback_model_name = "anthropic/claude-sonnet-4.5" # Explicit fallback
+                # Ensure we resolve the model to apply gateway prefixes (e.g. openrouter/)
+                fallback_model = self._resolve_model(fallback_model_name)
+                
                 logger.warning(f"Attempting fallback to {fallback_model}...")
                 
                 # Copy kwargs but update model

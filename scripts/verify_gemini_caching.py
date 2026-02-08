@@ -1,5 +1,6 @@
 import asyncio
 import sys
+import os
 import json
 from pathlib import Path
 
@@ -12,17 +13,21 @@ from nanobot.providers.litellm_provider import LiteLLMProvider
 async def main():
     print("🐈 Verifying Gemini Caching via Nanobot Provider...")
     
-    # Load config
+    # Load config (optional, can use env var)
     try:
         config = load_config()
         print("✓ Config loaded")
     except Exception as e:
-        print(f"❌ Failed to load config: {e}")
-        return
+        print(f"⚠️ Failed to load config: {e}")
+        config = None
 
-    # Check for OpenRouter key
-    if not config.providers.openrouter.api_key:
-        print("❌ No OpenRouter API key found in config.")
+    # Get API Key from Env or Config
+    api_key = os.environ.get("OPENROUTER_API_KEY")
+    if not api_key and config and config.providers.openrouter.api_key:
+        api_key = config.providers.openrouter.api_key
+
+    if not api_key:
+        print("❌ No OpenRouter API key found (env: OPENROUTER_API_KEY or config).")
         return
 
     # Initialize provider
@@ -30,7 +35,7 @@ async def main():
     print(f"✓ Initializing provider for model: {model_name}")
     
     provider = LiteLLMProvider(
-        api_key=config.providers.openrouter.api_key,
+        api_key=api_key,
         default_model=model_name
     )
     

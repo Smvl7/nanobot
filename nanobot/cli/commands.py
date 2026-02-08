@@ -169,6 +169,35 @@ def _make_provider(config):
 # ============================================================================
 
 
+async def execute_cron_job(job, bus, agent) -> str | None:
+    """Execute a cron job through the agent."""
+    # Echo mode: just send message, don't trigger agent
+    if job.payload.kind == "echo":
+        if job.payload.to:
+            from nanobot.bus.events import OutboundMessage
+            await bus.publish_outbound(OutboundMessage(
+                channel=job.payload.channel or "cli",
+                chat_id=job.payload.to,
+                content=job.payload.message
+            ))
+        return job.payload.message
+
+    response = await agent.process_direct(
+        job.payload.message,
+        session_key=f"cron:{job.id}",
+        channel=job.payload.channel or "cli",
+        chat_id=job.payload.to or "direct",
+    )
+    if job.payload.deliver and job.payload.to:
+        from nanobot.bus.events import OutboundMessage
+        await bus.publish_outbound(OutboundMessage(
+            channel=job.payload.channel or "cli",
+            chat_id=job.payload.to,
+            content=response or ""
+        ))
+    return response
+
+
 @app.command()
 def gateway(
     port: int = typer.Option(18790, "--port", "-p", help="Gateway port"),
@@ -216,34 +245,8 @@ def gateway(
     )
     
     # Set cron callback (needs agent)
-    async def on_cron_job(job: CronJob) -> str | None:
-        """Execute a cron job through the agent."""
-        # Echo mode: just send message, don't trigger agent
-        if job.payload.kind == "echo":
-            if job.payload.to:
-                from nanobot.bus.events import OutboundMessage
-                await bus.publish_outbound(OutboundMessage(
-                    channel=job.payload.channel or "cli",
-                    chat_id=job.payload.to,
-                    content=job.payload.message
-                ))
-            return job.payload.message
-
-        response = await agent.process_direct(
-            job.payload.message,
-            session_key=f"cron:{job.id}",
-            channel=job.payload.channel or "cli",
-            chat_id=job.payload.to or "direct",
-        )
-        if job.payload.deliver and job.payload.to:
-            from nanobot.bus.events import OutboundMessage
-            await bus.publish_outbound(OutboundMessage(
-                channel=job.payload.channel or "cli",
-                chat_id=job.payload.to,
-                content=response or ""
-            ))
-        return response
-    cron.on_job = on_cron_job
+    from functools import partial
+    cron.on_job = partial(execute_cron_job, bus=bus, agent=agent)
     
     # Create heartbeat service
     async def on_heartbeat(prompt: str) -> str:

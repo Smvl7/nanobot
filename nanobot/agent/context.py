@@ -24,16 +24,12 @@ class ContextBuilder:
         self.workspace = workspace
         self.memory = MemoryStore(workspace)
         self.skills = SkillsLoader(workspace)
+        self.last_l2_hash: str | None = None
     
-    def build_system_prompt(self, skill_names: list[str] | None = None) -> str:
+    def _get_layer_1_static(self, skill_names: list[str] | None = None) -> str:
         """
-        Build the system prompt from bootstrap files, memory, and skills.
-        
-        Args:
-            skill_names: Optional list of skills to include.
-        
-        Returns:
-            Complete system prompt.
+        Build Layer 1: Immutable Static Context.
+        Includes: Identity, Bootstrap Files, Sorted Skills.
         """
         parts = []
         
@@ -45,20 +41,15 @@ class ContextBuilder:
         if bootstrap:
             parts.append(bootstrap)
         
-        # Memory context
-        memory = self.memory.get_memory_context()
-        if memory:
-            parts.append(f"# Memory\n\n{memory}")
-        
-        # Skills - progressive loading
-        # 1. Always-loaded skills: include full content
+        # Skills (Sorted in SkillsLoader)
+        # 1. Always-loaded skills
         always_skills = self.skills.get_always_skills()
         if always_skills:
             always_content = self.skills.load_skills_for_context(always_skills)
             if always_content:
                 parts.append(f"# Active Skills\n\n{always_content}")
         
-        # 2. Available skills: only show summary (agent uses read_file to load)
+        # 2. Available skills summary
         skills_summary = self.skills.build_skills_summary()
         if skills_summary:
             parts.append(f"""# Skills
@@ -69,44 +60,33 @@ Skills with available="false" need dependencies installed first - you can try in
 {skills_summary}""")
         
         return "\n\n---\n\n".join(parts)
-    
-    def _get_static_identity(self) -> str:
-        """Get the core identity section (static part)."""
-        workspace_path = str(self.workspace.expanduser().resolve())
-        system = platform.system()
-        runtime = f"{'macOS' if system == 'Darwin' else system} {platform.machine()}, Python {platform.python_version()}"
+
+    def _get_layer_2_memory(self) -> str:
+        """
+        Build Layer 2: Semi-Mutable Context.
+        Includes: Memory (Long-term + Daily), Heartbeat Tasks.
+        """
+        parts = []
         
-        return f"""# nanobot 🐈
+        # Memory context
+        memory = self.memory.get_memory_context()
+        if memory:
+            parts.append(f"# Memory\n\n{memory}")
 
-You are nanobot, a helpful AI assistant. You have access to tools that allow you to:
-- Read, write, and edit files
-- Execute shell commands
-- Search the web and fetch web pages
-- Send messages to users on chat channels
-- Spawn subagents for complex background tasks
+        # Heartbeat Tasks
+        heartbeat_file = self.workspace / "HEARTBEAT.md"
+        if heartbeat_file.exists():
+            content = heartbeat_file.read_text(encoding="utf-8").strip()
+            if content:
+                parts.append(f"# Pending Tasks (Heartbeat)\n\n{content}")
+        
+        return "\n\n---\n\n".join(parts)
 
-## Runtime
-{runtime}
-
-## Workspace
-Your workspace is at: {workspace_path}
-- Memory files: {workspace_path}/memory/MEMORY.md
-- Daily notes: {workspace_path}/memory/YYYY-MM-DD.md
-- Custom skills: {workspace_path}/skills/{{skill-name}}/SKILL.md
-
-## System Architecture
-- Source Code: /usr/local/lib/python3.12/site-packages/nanobot/
-- Config: /root/.nanobot/config.json
-
-IMPORTANT: When responding to direct questions or conversations, reply directly with your text response.
-Only use the 'message' tool when you need to send a message to a specific chat channel (like WhatsApp).
-For normal conversation, just respond with text - do not call the message tool.
-
-Always be helpful, accurate, and concise. When using tools, explain what you're doing.
-When remembering something, write to {workspace_path}/memory/MEMORY.md"""
-    
-    def _get_dynamic_identity(self, channel: str | None = None, chat_id: str | None = None) -> str:
-        """Get the dynamic identity section (time, session)."""
+    def _get_layer_3_dynamic(self, channel: str | None = None, chat_id: str | None = None) -> str:
+        """
+        Build Layer 3: Highly Mutable Context.
+        Includes: Time, Session Info.
+        """
         from datetime import datetime
         now = datetime.now().strftime("%Y-%m-%d %H:%M (%A)")
         
@@ -116,6 +96,16 @@ When remembering something, write to {workspace_path}/memory/MEMORY.md"""
             parts.append(f"## Current Session\nChannel: {channel}\nChat ID: {chat_id}")
             
         return "\n\n".join(parts)
+    
+    # Deprecated methods mapping to new structure
+    def build_system_prompt(self, skill_names: list[str] | None = None) -> str:
+        """Legacy wrapper for static layer (Layer 1)."""
+        return self._get_layer_1_static(skill_names)
+
+    def _get_dynamic_identity(self, channel: str | None = None, chat_id: str | None = None) -> str:
+        """Legacy wrapper for dynamic layer (Layer 3)."""
+        return self._get_layer_3_dynamic(channel, chat_id)
+
 
     def _load_bootstrap_files(self) -> str:
         """Load all bootstrap files from workspace."""
@@ -157,29 +147,71 @@ When remembering something, write to {workspace_path}/memory/MEMORY.md"""
         messages = []
 
         # System prompt parts
-        static_prompt = self.build_system_prompt(skill_names)
-        dynamic_prompt = self._get_dynamic_identity(channel, chat_id)
+        import hashlib
+        
+        # Layer 1: Static (Always base)
+        layer_1 = self._get_layer_1_static(skill_names)
+        
+        # Layer 2: Semi-Mutable (Memory + Tasks)
+        layer_2 = self._get_layer_2_memory()
+        
+        # Layer 3: Dynamic (Time + Session)
+        layer_3 = self._get_layer_3_dynamic(channel, chat_id)
         
         if enable_caching:
-            # Use structured content with cache_control for Gemini
-            # Split static (cached) and dynamic (uncached) parts
-            messages.append({
-                "role": "system", 
-                "content": [
-                    {
-                        "type": "text", 
-                        "text": static_prompt, 
-                        "cache_control": {"type": "ephemeral"}
-                    },
-                    {
-                        "type": "text",
-                        "text": dynamic_prompt
-                    }
-                ]
-            })
+            # Smart Caching Logic
+            # Check if Layer 2 has changed since last request
+            current_l2_hash = hashlib.md5(layer_2.encode()).hexdigest()
+            l2_unchanged = self.last_l2_hash == current_l2_hash
+            
+            # Update hash for next time
+            self.last_l2_hash = current_l2_hash
+            
+            if l2_unchanged:
+                # OPTION A: Aggressive Caching (L1 + L2)
+                # If L2 is stable, we cache everything up to end of L2.
+                messages.append({
+                    "role": "system", 
+                    "content": [
+                        {
+                            "type": "text", 
+                            "text": layer_1
+                        },
+                        {
+                            "type": "text",
+                            "text": layer_2,
+                            "cache_control": {"type": "ephemeral"} # Cache boundary here
+                        },
+                        {
+                            "type": "text",
+                            "text": layer_3
+                        }
+                    ]
+                })
+            else:
+                # OPTION B: Safe Caching (L1 Only)
+                # If L2 changed, we only cache L1 to ensure high hit rate for the heavy part.
+                messages.append({
+                    "role": "system", 
+                    "content": [
+                        {
+                            "type": "text", 
+                            "text": layer_1,
+                            "cache_control": {"type": "ephemeral"} # Cache boundary here
+                        },
+                        {
+                            "type": "text",
+                            "text": layer_2
+                        },
+                        {
+                            "type": "text",
+                            "text": layer_3
+                        }
+                    ]
+                })
         else:
             # Concatenate for standard providers
-            full_prompt = f"{static_prompt}\n\n{dynamic_prompt}"
+            full_prompt = f"{layer_1}\n\n{layer_2}\n\n{layer_3}"
             messages.append({"role": "system", "content": full_prompt})
 
         # History

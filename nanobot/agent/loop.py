@@ -79,6 +79,7 @@ class AgentLoop:
             brave_api_key=brave_api_key,
             exec_config=self.exec_config,
             restrict_to_workspace=restrict_to_workspace,
+            agent_max_tokens=self.agent_max_tokens,
         )
         
         self._running = False
@@ -210,7 +211,10 @@ class AgentLoop:
         
         # Build initial messages (use get_history for LLM-formatted messages)
         messages = self.context.build_messages(
-            history=session.get_history(),
+            history=session.get_history(
+                max_messages=self.max_history_messages,
+                max_tokens=self.max_history_tokens
+            ),
             current_message=msg.content,
             media=msg.media if msg.media else None,
             channel=msg.channel,

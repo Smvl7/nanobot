@@ -15,6 +15,7 @@ from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.filesystem import ReadFileTool, WriteFileTool, ListDirTool
 from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.web import WebSearchTool, WebFetchTool
+from nanobot.utils.helpers import estimate_tokens
 
 
 class SubagentManager:
@@ -35,6 +36,7 @@ class SubagentManager:
         brave_api_key: str | None = None,
         exec_config: "ExecToolConfig | None" = None,
         restrict_to_workspace: bool = False,
+        agent_max_tokens: int = 100000,
     ):
         from nanobot.config.schema import ExecToolConfig
         self.provider = provider
@@ -44,6 +46,7 @@ class SubagentManager:
         self.brave_api_key = brave_api_key
         self.exec_config = exec_config or ExecToolConfig()
         self.restrict_to_workspace = restrict_to_workspace
+        self.agent_max_tokens = agent_max_tokens
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
     
     async def spawn(
@@ -125,6 +128,13 @@ class SubagentManager:
             while iteration < max_iterations:
                 iteration += 1
                 
+                # Check token limit
+                total_tokens = sum(estimate_tokens(str(m.get("content", ""))) for m in messages)
+                if total_tokens > self.agent_max_tokens:
+                    logger.warning(f"Subagent [{task_id}] reached token limit ({total_tokens}/{self.agent_max_tokens})")
+                    final_result = f"Task stopped early: Token limit reached ({total_tokens} tokens). Partial progress made."
+                    break
+
                 response = await self.provider.chat(
                     messages=messages,
                     tools=tools.get_definitions(),

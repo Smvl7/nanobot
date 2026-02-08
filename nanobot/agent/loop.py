@@ -20,6 +20,7 @@ from nanobot.agent.tools.spawn import SpawnTool
 from nanobot.agent.tools.cron import CronTool
 from nanobot.agent.subagent import SubagentManager
 from nanobot.session.manager import SessionManager
+from nanobot.agent.safety import LoopDetector, LoopDetectedError
 
 
 class AgentLoop:
@@ -210,6 +211,7 @@ class AgentLoop:
             cron_tool.set_context(msg.channel, msg.chat_id)
         
         # Build initial messages (use get_history for LLM-formatted messages)
+        enable_caching = "gemini" in self.model.lower()
         messages = self.context.build_messages(
             history=session.get_history(
                 max_messages=self.max_history_messages,
@@ -219,21 +221,47 @@ class AgentLoop:
             media=msg.media if msg.media else None,
             channel=msg.channel,
             chat_id=msg.chat_id,
+            enable_caching=enable_caching,
         )
         
         # Agent loop
         iteration = 0
         final_content = None
+        loop_detector = LoopDetector()
         
         while iteration < self.max_iterations:
             iteration += 1
             
-            # Call LLM
-            response = await self.provider.chat(
-                messages=messages,
-                tools=self.tools.get_definitions(),
-                model=self.model
-            )
+            try:
+                # Call LLM
+                response = await self.provider.chat(
+                    messages=messages,
+                    tools=self.tools.get_definitions(),
+                    model=self.model
+                )
+                
+                if response.usage:
+                    logger.info(f"Token usage: {response.usage}")
+                
+                # Check for loops
+                tool_call_dicts_for_detector = []
+                if response.has_tool_calls:
+                    tool_call_dicts_for_detector = [
+                        {
+                            "function": {
+                                "name": tc.name,
+                                "arguments": json.dumps(tc.arguments)
+                            }
+                        }
+                        for tc in response.tool_calls
+                    ]
+                
+                loop_detector.add_interaction(response.content, tool_call_dicts_for_detector)
+                
+            except LoopDetectedError as e:
+                logger.error(f"Loop detected: {e}")
+                final_content = f"🛑 **Safety Stop**: I stopped execution because I detected a loop in my actions ({str(e)}). Please clarify your request or provide more specific instructions."
+                break
             
             # Handle tool calls
             if response.has_tool_calls:
@@ -321,6 +349,7 @@ class AgentLoop:
             cron_tool.set_context(origin_channel, origin_chat_id)
         
         # Build messages with the announce content
+        enable_caching = "gemini" in self.model.lower()
         messages = self.context.build_messages(
             history=session.get_history(
                 max_messages=self.max_history_messages,
@@ -329,20 +358,43 @@ class AgentLoop:
             current_message=msg.content,
             channel=origin_channel,
             chat_id=origin_chat_id,
+            enable_caching=enable_caching,
         )
         
         # Agent loop (limited for announce handling)
         iteration = 0
         final_content = None
+        loop_detector = LoopDetector()
         
         while iteration < self.max_iterations:
             iteration += 1
             
-            response = await self.provider.chat(
-                messages=messages,
-                tools=self.tools.get_definitions(),
-                model=self.model
-            )
+            try:
+                response = await self.provider.chat(
+                    messages=messages,
+                    tools=self.tools.get_definitions(),
+                    model=self.model
+                )
+                
+                # Check for loops
+                tool_call_dicts_for_detector = []
+                if response.has_tool_calls:
+                    tool_call_dicts_for_detector = [
+                        {
+                            "function": {
+                                "name": tc.name,
+                                "arguments": json.dumps(tc.arguments)
+                            }
+                        }
+                        for tc in response.tool_calls
+                    ]
+                
+                loop_detector.add_interaction(response.content, tool_call_dicts_for_detector)
+            
+            except LoopDetectedError as e:
+                logger.error(f"Loop detected in system message processing: {e}")
+                final_content = f"Loop detected during system message processing: {e}"
+                break
             
             if response.has_tool_calls:
                 tool_call_dicts = [

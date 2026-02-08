@@ -1,14 +1,24 @@
 # 🤖 Project Agents & Architecture
 
 ## 📋 Index
+  - [Development Workflow](#development-workflow)
 - [Team Context](#-team-context)
 - [Nanobot System](#-nanobot-vps-primary)
   - [Architecture](#architecture)
   - [Infrastructure](#infrastructure)
-  - [Deployment Workflow](#deployment-workflow)
 - [Other Agents](#-other-agents)
 
 ---
+
+## Development Workflow
+Updates are automated via GitHub Actions.
+1. **Develop**: Create a new branch for every task. Push to origin (fork). Dont forget about tests.
+2. **Pull Request**: Create PR to `main` branch of origin (User's Fork).
+3. **Merge**: Merge PR to trigger deployment.
+4. **CI/CD Pipeline**:
+   - **Build**: GitHub Actions builds the Docker image and pushes to GHCR.
+   - **Deploy**: GitHub Actions connects to VPS via SSH and updates the container.
+5. **Verify**: Check logs via `docker logs -f nanobot_agent`.
 
 ## 🛠 Team Context
 **Role**: Personal Bot Deployment & Development Team.
@@ -40,13 +50,6 @@ A modular Python-based agent framework designed for autonomy and extensibility.
   - `~/nanobot/nanobot_workspace`: Persisted agent workspace (memory, docs).
   - `~/nanobot/config.json`: Configuration & API Keys (Secrets).
 
-### Deployment Workflow
-Updates are automated via GitHub Actions.
-1. **Commit & Push**: Push changes to the `main` branch.
-2. **CI/CD Pipeline**:
-   - **Build**: GitHub Actions builds the Docker image and pushes to GHCR.
-   - **Deploy**: GitHub Actions connects to VPS via SSH and updates the container.
-3. **Verify**: Check logs via `docker logs -f nanobot_agent`.
 
 ### 📡 Server Access & Logs
 **DO NOT FORGET THIS.**
@@ -63,3 +66,6 @@ Updates are automated via GitHub Actions.
 - **Type**: Telegram Bot + Web Dashboard
 - **Location**: `~/pupin-cupping`
 - **Port**: 8000
+
+
+[def]: #deployment-workflow

@@ -1,56 +1,60 @@
-import unittest
-from unittest.mock import MagicMock, patch, AsyncMock
-import os
 import asyncio
+import unittest
+from unittest.mock import MagicMock, AsyncMock, patch
+import os
 
-# Import types
-from nanobot.cron.types import CronJob, CronPayload
-# Import the function to test
-from nanobot.cli.commands import execute_cron_job
+# Import modules to test
+from nanobot.cron.types import CronJob, CronPayload, CronSchedule
 from nanobot.providers.litellm_provider import LiteLLMProvider
+from nanobot.cli.commands import execute_cron_job
 
-class TestCronEcho(unittest.TestCase):
-    def test_cron_echo_bypass(self):
-        """Test that cron jobs with kind='echo' bypass the agent."""
+class TestCronEchoAndFallback(unittest.IsolatedAsyncioTestCase):
+    
+    # --- Test 1: Cron Echo Mode Logic ---
+    async def test_cron_echo_mode_dispatch(self):
+        """
+        Verify that a job with kind='echo' bypasses the agent and publishes directly to the bus.
+        """
+        print("\n[Test] Cron Echo Mode Dispatch")
         
-        # Mock dependencies
-        mock_bus = MagicMock()
+        # Mocks
+        mock_agent = AsyncMock()
+        mock_bus = AsyncMock()
         mock_bus.publish_outbound = AsyncMock()
         
-        mock_agent = MagicMock()
-        mock_agent.process_direct = AsyncMock()
-        
-        # Create a mock CronJob with kind='echo'
+        # Create a job with kind='echo'
         job = CronJob(
             id="test-job",
-            name="Test Echo",
-            enabled=True,
-            schedule=MagicMock(),
+            name="Echo Test",
+            schedule=CronSchedule(kind="every", every_ms=1000),
             payload=CronPayload(
                 kind="echo",
                 message="Hello World",
                 deliver=True,
                 channel="telegram",
-                to="12345"
+                to="user123"
             ),
             state=MagicMock(),
             created_at_ms=0,
             updated_at_ms=0
         )
         
-        # Execute the handler
-        asyncio.run(execute_cron_job(job, mock_bus, mock_agent))
+        # Execute the handler (using the actual imported function)
+        await execute_cron_job(job, mock_bus, mock_agent)
         
         # Verify:
         # 1. bus.publish_outbound WAS called (echo behavior)
         mock_bus.publish_outbound.assert_called_once()
         args, _ = mock_bus.publish_outbound.call_args
         self.assertIn("Hello World", args[0].content)
+        self.assertEqual(args[0].chat_id, "user123")
         
         # 2. agent.process_direct WAS NOT called (bypass behavior)
         mock_agent.process_direct.assert_not_called()
+        print("  ✓ Agent was correctly bypassed")
+        print("  ✓ Message was published to bus")
 
-    def test_cron_agent_dispatch(self):
+    async def test_cron_agent_dispatch(self):
         """Test that cron jobs with kind='agent_turn' go to the agent."""
         
         # Mock dependencies
@@ -79,7 +83,7 @@ class TestCronEcho(unittest.TestCase):
         )
         
         # Execute the handler
-        asyncio.run(execute_cron_job(job, mock_bus, mock_agent))
+        await execute_cron_job(job, mock_bus, mock_agent)
         
         # Verify:
         # 1. bus.publish_outbound WAS called (result delivery)
@@ -90,6 +94,7 @@ class TestCronEcho(unittest.TestCase):
         # 2. agent.process_direct WAS called
         mock_agent.process_direct.assert_called_once()
 
+    # --- Test 2: LLM Fallback Resolution ---
     @patch.dict(os.environ, {"OPENROUTER_API_KEY": "sk-or-test"})
     def test_litellm_openrouter_fallback(self):
         """Test that fallback model gets 'openrouter/' prefix if using OpenRouter."""
@@ -119,5 +124,5 @@ class TestCronEcho(unittest.TestCase):
         resolved = provider._resolve_model("anthropic/claude-sonnet")
         self.assertEqual(resolved, "anthropic/claude-sonnet")
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

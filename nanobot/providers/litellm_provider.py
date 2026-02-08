@@ -222,6 +222,16 @@ class LiteLLMProvider(LLMProvider):
                     usage["cached_tokens"] = details.cached_tokens
                 elif isinstance(details, dict) and "cached_tokens" in details:
                     usage["cached_tokens"] = details["cached_tokens"]
+            
+            # Check for OpenRouter specific fields (sometimes at root or in usage)
+            if "cached_tokens" not in usage:
+                # Check root level native_tokens_cached (OpenRouter)
+                if hasattr(response, "native_tokens_cached") and response.native_tokens_cached is not None:
+                     usage["cached_tokens"] = response.native_tokens_cached
+                # Check usage level native_tokens_cached
+                elif hasattr(response.usage, "native_tokens_cached") and response.usage.native_tokens_cached is not None:
+                     usage["cached_tokens"] = response.usage.native_tokens_cached
+
         
         return LLMResponse(
             content=message.content,

@@ -38,7 +38,7 @@ class ContextBuilder:
         parts = []
         
         # Core identity
-        parts.append(self._get_identity())
+        parts.append(self._get_static_identity())
         
         # Bootstrap files
         bootstrap = self._load_bootstrap_files()
@@ -70,10 +70,8 @@ Skills with available="false" need dependencies installed first - you can try in
         
         return "\n\n---\n\n".join(parts)
     
-    def _get_identity(self) -> str:
-        """Get the core identity section."""
-        from datetime import datetime
-        now = datetime.now().strftime("%Y-%m-%d %H:%M (%A)")
+    def _get_static_identity(self) -> str:
+        """Get the core identity section (static part)."""
         workspace_path = str(self.workspace.expanduser().resolve())
         system = platform.system()
         runtime = f"{'macOS' if system == 'Darwin' else system} {platform.machine()}, Python {platform.python_version()}"
@@ -86,9 +84,6 @@ You are nanobot, a helpful AI assistant. You have access to tools that allow you
 - Search the web and fetch web pages
 - Send messages to users on chat channels
 - Spawn subagents for complex background tasks
-
-## Current Time
-{now}
 
 ## Runtime
 {runtime}
@@ -110,6 +105,18 @@ For normal conversation, just respond with text - do not call the message tool.
 Always be helpful, accurate, and concise. When using tools, explain what you're doing.
 When remembering something, write to {workspace_path}/memory/MEMORY.md"""
     
+    def _get_dynamic_identity(self, channel: str | None = None, chat_id: str | None = None) -> str:
+        """Get the dynamic identity section (time, session)."""
+        from datetime import datetime
+        now = datetime.now().strftime("%Y-%m-%d %H:%M (%A)")
+        
+        parts = [f"## Current Time\n{now}"]
+        
+        if channel and chat_id:
+            parts.append(f"## Current Session\nChannel: {channel}\nChat ID: {chat_id}")
+            
+        return "\n\n".join(parts)
+
     def _load_bootstrap_files(self) -> str:
         """Load all bootstrap files from workspace."""
         parts = []
@@ -149,25 +156,31 @@ When remembering something, write to {workspace_path}/memory/MEMORY.md"""
         """
         messages = []
 
-        # System prompt
-        system_prompt = self.build_system_prompt(skill_names)
-        if channel and chat_id:
-            system_prompt += f"\n\n## Current Session\nChannel: {channel}\nChat ID: {chat_id}"
+        # System prompt parts
+        static_prompt = self.build_system_prompt(skill_names)
+        dynamic_prompt = self._get_dynamic_identity(channel, chat_id)
         
         if enable_caching:
             # Use structured content with cache_control for Gemini
+            # Split static (cached) and dynamic (uncached) parts
             messages.append({
                 "role": "system", 
                 "content": [
                     {
                         "type": "text", 
-                        "text": system_prompt, 
+                        "text": static_prompt, 
                         "cache_control": {"type": "ephemeral"}
+                    },
+                    {
+                        "type": "text",
+                        "text": dynamic_prompt
                     }
                 ]
             })
         else:
-            messages.append({"role": "system", "content": system_prompt})
+            # Concatenate for standard providers
+            full_prompt = f"{static_prompt}\n\n{dynamic_prompt}"
+            messages.append({"role": "system", "content": full_prompt})
 
         # History
         messages.extend(history)

@@ -30,10 +30,34 @@ def _compute_next_run(schedule: CronSchedule, now_ms: int) -> int | None:
     if schedule.kind == "cron" and schedule.expr:
         try:
             from croniter import croniter
-            cron = croniter(schedule.expr, time.time())
-            next_time = cron.get_next()
-            return int(next_time * 1000)
-        except Exception:
+            import datetime
+            from zoneinfo import ZoneInfo
+            
+            base_time = datetime.datetime.fromtimestamp(now_ms / 1000, tz=datetime.timezone.utc)
+            
+            # If a timezone is specified in the schedule, use it for calculation
+            if schedule.tz:
+                try:
+                    tz = ZoneInfo(schedule.tz)
+                    # Convert base_time to the target timezone for cron calculation
+                    local_time = base_time.astimezone(tz)
+                    cron = croniter(schedule.expr, local_time)
+                    next_time = cron.get_next(datetime.datetime)
+                    # Convert back to UTC timestamp
+                    return int(next_time.timestamp() * 1000)
+                except Exception as e:
+                    logger.error(f"Cron: invalid timezone '{schedule.tz}': {e}")
+                    # Fallback to UTC
+                    cron = croniter(schedule.expr, base_time)
+                    next_time = cron.get_next(float)
+                    return int(next_time * 1000)
+            else:
+                # Default behavior (UTC)
+                cron = croniter(schedule.expr, base_time)
+                next_time = cron.get_next(float)
+                return int(next_time * 1000)
+        except Exception as e:
+            logger.error(f"Cron: failed to compute next run: {e}")
             return None
     
     return None
@@ -150,7 +174,9 @@ class CronService:
         self._load_store()
         self._recompute_next_runs()
         self._save_store()
-        self._arm_timer()
+        
+        # Start the heartbeat loop instead of single-shot timer
+        self._timer_task = asyncio.create_task(self._heartbeat_loop())
         logger.info(f"Cron service started with {len(self._store.jobs if self._store else [])} jobs")
     
     def stop(self) -> None:
@@ -176,28 +202,40 @@ class CronService:
         times = [j.state.next_run_at_ms for j in self._store.jobs 
                  if j.enabled and j.state.next_run_at_ms]
         return min(times) if times else None
-    
-    def _arm_timer(self) -> None:
-        """Schedule the next timer tick."""
-        if self._timer_task:
-            self._timer_task.cancel()
+
+    async def _heartbeat_loop(self) -> None:
+        """Main service loop: wake up frequently to check file changes and due jobs."""
+        last_mtime = 0.0
         
-        next_wake = self._get_next_wake_ms()
-        if not next_wake or not self._running:
-            return
-        
-        delay_ms = max(0, next_wake - _now_ms())
-        delay_s = delay_ms / 1000
-        
-        async def tick():
-            await asyncio.sleep(delay_s)
-            if self._running:
-                await self._on_timer()
-        
-        self._timer_task = asyncio.create_task(tick())
-    
-    async def _on_timer(self) -> None:
-        """Handle timer tick - run due jobs."""
+        while self._running:
+            try:
+                # 1. Hot Reload: Check if file changed
+                if self.store_path.exists():
+                    current_mtime = self.store_path.stat().st_mtime
+                    if current_mtime > last_mtime:
+                        if last_mtime > 0: # Skip log on first run
+                            logger.info("Cron: jobs.json changed, reloading...")
+                        self._store = None # Force reload
+                        self._load_store()
+                        self._recompute_next_runs()
+                        last_mtime = current_mtime
+                
+                # 2. Check due jobs
+                await self._check_and_run_due_jobs()
+                
+                # 3. Smart Sleep: Sleep for 1 minute (or less if urgent job)
+                # We sleep short enough to catch file changes, but long enough not to burn CPU.
+                # 60s is standard cron resolution.
+                await asyncio.sleep(60)
+                
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Cron loop error: {e}")
+                await asyncio.sleep(60) # Prevent busy loop on error
+
+    async def _check_and_run_due_jobs(self) -> None:
+        """Check for due jobs and execute them."""
         if not self._store:
             return
         
@@ -207,11 +245,20 @@ class CronService:
             if j.enabled and j.state.next_run_at_ms and now >= j.state.next_run_at_ms
         ]
         
-        for job in due_jobs:
-            await self._execute_job(job)
-        
-        self._save_store()
-        self._arm_timer()
+        if due_jobs:
+            logger.info(f"Cron: found {len(due_jobs)} due jobs")
+            for job in due_jobs:
+                await self._execute_job(job)
+            
+            self._save_store()
+
+    def _arm_timer(self) -> None:
+        """Deprecated: Timer is now handled by _heartbeat_loop."""
+        pass
+    
+    async def _on_timer(self) -> None:
+        """Deprecated: Handled by _check_and_run_due_jobs."""
+        pass
     
     async def _execute_job(self, job: CronJob) -> None:
         """Execute a single job."""

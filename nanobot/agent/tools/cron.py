@@ -26,7 +26,7 @@ class CronTool(Tool):
     
     @property
     def description(self) -> str:
-        return "Schedule reminders and recurring tasks. Actions: add, list, remove."
+        return "Schedule tasks. Use 'echo' type for simple text reminders (sent directly to chat). Use 'agent' type for tasks requiring tool use or reasoning (e.g. 'check weather'). Actions: add, list, remove."
     
     @property
     def parameters(self) -> dict[str, Any]:
@@ -110,7 +110,7 @@ class CronTool(Tool):
         jobs = self._cron.list_jobs()
         if not jobs:
             return "No scheduled jobs."
-        lines = [f"- {j.name} (id: {j.id}, {j.schedule.kind})" for j in jobs]
+        lines = [f"- {j.name} (id: {j.id}, schedule: {j.schedule.kind}, type: {j.payload.kind})" for j in jobs]
         return "Scheduled jobs:\n" + "\n".join(lines)
     
     def _remove_job(self, job_id: str | None) -> str:

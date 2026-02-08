@@ -99,6 +99,10 @@ Your workspace is at: {workspace_path}
 - Daily notes: {workspace_path}/memory/YYYY-MM-DD.md
 - Custom skills: {workspace_path}/skills/{{skill-name}}/SKILL.md
 
+## System Architecture
+- Source Code: /usr/local/lib/python3.12/site-packages/nanobot/
+- Config: /root/.nanobot/config.json
+
 IMPORTANT: When responding to direct questions or conversations, reply directly with your text response.
 Only use the 'message' tool when you need to send a message to a specific chat channel (like WhatsApp).
 For normal conversation, just respond with text - do not call the message tool.
@@ -126,6 +130,7 @@ When remembering something, write to {workspace_path}/memory/MEMORY.md"""
         media: list[str] | None = None,
         channel: str | None = None,
         chat_id: str | None = None,
+        enable_caching: bool = False,
     ) -> list[dict[str, Any]]:
         """
         Build the complete message list for an LLM call.
@@ -137,6 +142,7 @@ When remembering something, write to {workspace_path}/memory/MEMORY.md"""
             media: Optional list of local file paths for images/media.
             channel: Current channel (telegram, feishu, etc.).
             chat_id: Current chat/user ID.
+            enable_caching: Whether to enable prompt caching (e.g. for Gemini).
 
         Returns:
             List of messages including system prompt.
@@ -147,7 +153,21 @@ When remembering something, write to {workspace_path}/memory/MEMORY.md"""
         system_prompt = self.build_system_prompt(skill_names)
         if channel and chat_id:
             system_prompt += f"\n\n## Current Session\nChannel: {channel}\nChat ID: {chat_id}"
-        messages.append({"role": "system", "content": system_prompt})
+        
+        if enable_caching:
+            # Use structured content with cache_control for Gemini
+            messages.append({
+                "role": "system", 
+                "content": [
+                    {
+                        "type": "text", 
+                        "text": system_prompt, 
+                        "cache_control": {"type": "ephemeral"}
+                    }
+                ]
+            })
+        else:
+            messages.append({"role": "system", "content": system_prompt})
 
         # History
         messages.extend(history)

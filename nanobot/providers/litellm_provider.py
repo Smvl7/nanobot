@@ -212,6 +212,16 @@ class LiteLLMProvider(LLMProvider):
                 "completion_tokens": response.usage.completion_tokens,
                 "total_tokens": response.usage.total_tokens,
             }
+            
+            # Extract cached tokens if available (e.g. Gemini, Anthropic)
+            if hasattr(response.usage, "prompt_tokens_details") and response.usage.prompt_tokens_details:
+                # Handle both object with attributes and dict-like access if needed, 
+                # but LiteLLM usually returns objects.
+                details = response.usage.prompt_tokens_details
+                if hasattr(details, "cached_tokens") and details.cached_tokens is not None:
+                    usage["cached_tokens"] = details.cached_tokens
+                elif isinstance(details, dict) and "cached_tokens" in details:
+                    usage["cached_tokens"] = details["cached_tokens"]
         
         return LLMResponse(
             content=message.content,

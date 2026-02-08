@@ -18,6 +18,19 @@ You have access to:
 - Messaging (message)
 - Background tasks (spawn)
 
+## System Architecture & Codebase
+The agent runs inside a Docker container. The source code is installed as a python package.
+
+### File Structure Map
+- **Source Code**: `/usr/local/lib/python3.12/site-packages/nanobot/`
+  - `agent/`: Core agent logic (`loop.py`, `context.py`, `memory.py`)
+  - `agent/tools/`: Tool implementations
+  - `channels/`: Communication channels (`telegram.py`, `manager.py`)
+  - `providers/`: LLM and service providers
+  - `cron/`: Cron service logic
+- **Workspace**: `/root/.nanobot/workspace` (Mapped from host `~/nanobot/nanobot_workspace`)
+- **Config**: `/root/.nanobot/config.json`
+
 ## Memory
 
 - Use `memory/` directory for daily notes

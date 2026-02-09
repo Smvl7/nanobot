@@ -79,6 +79,7 @@ class CronService:
         self._running = False
         self._running_jobs: set[str] = set()
         self._lock = asyncio.Lock()  # Protect file access
+        self._wakeup_event = asyncio.Event() # To wake up loop immediately
     
     def _load_store(self) -> CronStore:
         """Load jobs from disk."""
@@ -235,7 +236,12 @@ class CronService:
                     delta_s = max(0.1, delta_ms / 1000)
                     sleep_time = min(60, delta_s)
                 
-                await asyncio.sleep(sleep_time)
+                # Wait for timeout OR wakeup event
+                try:
+                    await asyncio.wait_for(self._wakeup_event.wait(), timeout=sleep_time)
+                    self._wakeup_event.clear() # Reset event
+                except asyncio.TimeoutError:
+                    pass # Timeout reached naturally
                 
             except asyncio.CancelledError:
                 break
@@ -252,14 +258,12 @@ class CronService:
         due_jobs = [
             j for j in self._store.jobs
             if j.enabled and j.state.next_run_at_ms and now >= j.state.next_run_at_ms
+            and j.id not in self._running_jobs # Skip running jobs
         ]
         
         if due_jobs:
             logger.info(f"Cron: found {len(due_jobs)} due jobs")
             for job in due_jobs:
-                if job.id in self._running_jobs:
-                    logger.warning(f"Cron: job '{job.name}' ({job.id}) is already running, skipping")
-                    continue
                 # Run concurrently
                 asyncio.create_task(self._execute_job(job))
 
@@ -303,13 +307,13 @@ class CronService:
     
     # ========== Public API ==========
     
-    def list_jobs(self, include_disabled: bool = False) -> list[CronJob]:
+    async def list_jobs(self, include_disabled: bool = False) -> list[CronJob]:
         """List all jobs."""
         store = self._load_store()
         jobs = store.jobs if include_disabled else [j for j in store.jobs if j.enabled]
         return sorted(jobs, key=lambda j: j.state.next_run_at_ms or float('inf'))
     
-    def add_job(
+    async def add_job(
         self,
         name: str,
         schedule: CronSchedule,
@@ -321,7 +325,7 @@ class CronService:
         delete_after_run: bool = False,
     ) -> CronJob:
         """Add a new job."""
-        return self.add_jobs_batch([
+        jobs = await self.add_jobs_batch([
             {
                 "name": name,
                 "schedule": schedule,
@@ -332,94 +336,92 @@ class CronService:
                 "to": to,
                 "delete_after_run": delete_after_run
             }
-        ])[0]
+        ])
+        return jobs[0]
 
-    def add_jobs_batch(self, jobs_data: list[dict[str, Any]]) -> list[CronJob]:
+    async def add_jobs_batch(self, jobs_data: list[dict[str, Any]]) -> list[CronJob]:
         """Add multiple jobs atomically."""
         if not jobs_data:
             return []
 
-        # We need to run this under lock, but since _load_store and _save_store are sync (file IO),
-        # and we want to prevent race conditions from other async tasks calling this method,
-        # we can't easily use async lock around sync methods without making them async.
-        # However, since this runs in a single-threaded event loop, the only race condition
-        # is between await points.
-        # But for correctness with future async I/O, we should use the lock if we make load/save async.
-        # For now, we rely on the fact that no awaits happen between load and save.
-        # Wait, if we use file lock, we need to ensure no other process touches it.
-        # Assuming single process nanobot.
-        
-        store = self._load_store()
-        now = _now_ms()
-        new_jobs = []
-
-        for data in jobs_data:
-            job = CronJob(
-                id=str(uuid.uuid4())[:8],
-                name=data["name"],
-                enabled=True,
-                schedule=data["schedule"],
-                payload=CronPayload(
-                    kind=data.get("kind", "agent_turn"),
-                    message=data["message"],
-                    deliver=data.get("deliver", False),
-                    channel=data.get("channel"),
-                    to=data.get("to"),
-                ),
-                state=CronJobState(next_run_at_ms=_compute_next_run(data["schedule"], now)),
-                created_at_ms=now,
-                updated_at_ms=now,
-                delete_after_run=data.get("delete_after_run", False),
-            )
-            new_jobs.append(job)
-        
-        store.jobs.extend(new_jobs)
-        self._save_store()
-        
-        logger.info(f"Cron: added {len(new_jobs)} jobs batch")
-        return new_jobs
+        async with self._lock:
+            store = self._load_store()
+            now = _now_ms()
+            new_jobs = []
     
-    def remove_job(self, job_id: str) -> bool:
-        """Remove a job by ID."""
-        store = self._load_store()
-        before = len(store.jobs)
-        store.jobs = [j for j in store.jobs if j.id != job_id]
-        removed = len(store.jobs) < before
-        
-        if removed:
+            for data in jobs_data:
+                job = CronJob(
+                    id=str(uuid.uuid4())[:8],
+                    name=data["name"],
+                    enabled=True,
+                    schedule=data["schedule"],
+                    payload=CronPayload(
+                        kind=data.get("kind", "agent_turn"),
+                        message=data["message"],
+                        deliver=data.get("deliver", False),
+                        channel=data.get("channel"),
+                        to=data.get("to"),
+                    ),
+                    state=CronJobState(next_run_at_ms=_compute_next_run(data["schedule"], now)),
+                    created_at_ms=now,
+                    updated_at_ms=now,
+                    delete_after_run=data.get("delete_after_run", False),
+                )
+                new_jobs.append(job)
+            
+            store.jobs.extend(new_jobs)
             self._save_store()
-            logger.info(f"Cron: removed job {job_id}")
-        
-        return removed
+            self._wakeup_event.set() # Wake up loop
+            
+            logger.info(f"Cron: added {len(new_jobs)} jobs batch")
+            return new_jobs
     
-    def enable_job(self, job_id: str, enabled: bool = True) -> CronJob | None:
-        """Enable or disable a job."""
-        store = self._load_store()
-        for job in store.jobs:
-            if job.id == job_id:
-                job.enabled = enabled
-                job.updated_at_ms = _now_ms()
-                if enabled:
-                    job.state.next_run_at_ms = _compute_next_run(job.schedule, _now_ms())
-                else:
-                    job.state.next_run_at_ms = None
+    async def remove_job(self, job_id: str) -> bool:
+        """Remove a job by ID."""
+        async with self._lock:
+            store = self._load_store()
+            before = len(store.jobs)
+            store.jobs = [j for j in store.jobs if j.id != job_id]
+            removed = len(store.jobs) < before
+            
+            if removed:
                 self._save_store()
-                return job
-        return None
+                self._wakeup_event.set() # Wake up loop
+                logger.info(f"Cron: removed job {job_id}")
+            
+            return removed
+    
+    async def enable_job(self, job_id: str, enabled: bool = True) -> CronJob | None:
+        """Enable or disable a job."""
+        async with self._lock:
+            store = self._load_store()
+            for job in store.jobs:
+                if job.id == job_id:
+                    job.enabled = enabled
+                    job.updated_at_ms = _now_ms()
+                    if enabled:
+                        job.state.next_run_at_ms = _compute_next_run(job.schedule, _now_ms())
+                    else:
+                        job.state.next_run_at_ms = None
+                    self._save_store()
+                    self._wakeup_event.set() # Wake up loop
+                    return job
+            return None
     
     async def run_job(self, job_id: str, force: bool = False) -> bool:
         """Manually run a job."""
+        # Note: We don't lock the whole run, as it might take time.
+        # But we need to load store safely.
         store = self._load_store()
         for job in store.jobs:
             if job.id == job_id:
                 if not force and not job.enabled:
                     return False
                 await self._execute_job(job)
-                # self._save_store() # Already called in _execute_job
                 return True
         return False
     
-    def status(self) -> dict:
+    async def status(self) -> dict:
         """Get service status."""
         store = self._load_store()
         return {

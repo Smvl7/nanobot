@@ -26,7 +26,16 @@ class CronTool(Tool):
     
     @property
     def description(self) -> str:
-        return "Schedule tasks/reminders. CRITICAL: For simple text reminders (e.g. 'Remind me to drink water'), YOU MUST USE type='echo'. This sends the text directly and reliably. Do NOT use 'agent' for reminders. Only use 'agent' for complex tasks (e.g. 'Check stock price'). When using 'agent', return the result as your final answer; DO NOT use the `send_message` tool."
+        return """Schedule tasks and reminders. 
+
+CRITICAL - YOU MUST CHOOSE THE CORRECT TYPE:
+1. 'echo' (MANDATORY for text): Use this for simple reminders like "Remind me to drink water" or "Call Mom". It sends the text directly. Do NOT use 'agent' for this.
+2. 'agent' (ONLY for logic): Use this ONLY if you need to use tools (e.g. "Check weather every morning", "Summarize news"). The result will be sent as the notification.
+
+Examples:
+- "Remind me to sleep" -> type='echo', message="Time to sleep!"
+- "Check stock price at 9am" -> type='agent', message="Check AAPL price"
+"""
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -103,15 +112,15 @@ class CronTool(Tool):
     ) -> str:
         if action == "add":
             if batch:
-                return self._add_jobs_batch(batch)
-            return self._add_job(message, every_seconds, cron_expr, at, timezone, type)
+                return await self._add_jobs_batch(batch)
+            return await self._add_job(message, every_seconds, cron_expr, at, timezone, type)
         elif action == "list":
-            return self._list_jobs()
+            return await self._list_jobs()
         elif action == "remove":
-            return self._remove_job(job_id)
+            return await self._remove_job(job_id)
         return f"Unknown action: {action}"
 
-    def _add_jobs_batch(self, batch: list[dict[str, Any]]) -> str:
+    async def _add_jobs_batch(self, batch: list[dict[str, Any]]) -> str:
         """Add multiple jobs at once."""
         if not self._channel or not self._chat_id:
             return "Error: no session context (channel/chat_id)"
@@ -141,7 +150,7 @@ class CronTool(Tool):
                 "to": self._chat_id
             })
         
-        created = self._cron.add_jobs_batch(jobs_data)
+        created = await self._cron.add_jobs_batch(jobs_data)
         return f"Created {len(created)} jobs successfully"
 
     def _build_schedule(
@@ -177,7 +186,7 @@ class CronTool(Tool):
         else:
             return "Error: either every_seconds, cron_expr, or at is required"
 
-    def _add_job(
+    async def _add_job(
         self, 
         message: str, 
         every_seconds: int | None, 
@@ -195,7 +204,7 @@ class CronTool(Tool):
         if isinstance(schedule, str):
             return schedule
         
-        job = self._cron.add_job(
+        job = await self._cron.add_job(
             name=message[:30],
             schedule=schedule,
             message=message,
@@ -206,16 +215,16 @@ class CronTool(Tool):
         )
         return f"Created job '{job.name}' (id: {job.id})"
     
-    def _list_jobs(self) -> str:
-        jobs = self._cron.list_jobs()
+    async def _list_jobs(self) -> str:
+        jobs = await self._cron.list_jobs()
         if not jobs:
             return "No scheduled jobs."
         lines = [f"- {j.name} (id: {j.id}, schedule: {j.schedule.kind}, type: {j.payload.kind})" for j in jobs]
         return "Scheduled jobs:\n" + "\n".join(lines)
     
-    def _remove_job(self, job_id: str | None) -> str:
+    async def _remove_job(self, job_id: str | None) -> str:
         if not job_id:
             return "Error: job_id is required for remove"
-        if self._cron.remove_job(job_id):
+        if await self._cron.remove_job(job_id):
             return f"Removed job {job_id}"
         return f"Job {job_id} not found"

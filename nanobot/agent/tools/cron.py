@@ -43,9 +43,26 @@ class CronTool(Tool):
                     "enum": ["echo", "agent"],
                     "description": "Job type. 'echo': DIRECT MESSAGE. Use for ALL text reminders/notifications. 'agent': AI TASK. Starts a full agent session (slow). Use only if you need the agent to think/act."
                 },
+                "batch": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "message": {"type": "string"},
+                            "type": {"type": "string", "enum": ["echo", "agent"]},
+                            "every_seconds": {"type": "integer"},
+                            "cron_expr": {"type": "string"},
+                            "at": {"type": "string"},
+                            "timezone": {"type": "string"}
+                        },
+                        "required": ["message"]
+                    },
+                    "description": "List of jobs to add at once (for batch add)"
+                },
                 "message": {
                     "type": "string",
-                    "description": "Reminder message (for add)"
+                    "description": "Reminder message (for single add)"
                 },
                 "every_seconds": {
                     "type": "integer",
@@ -81,35 +98,64 @@ class CronTool(Tool):
         timezone: str | None = None,
         job_id: str | None = None,
         type: str = "echo",
+        batch: list[dict[str, Any]] | None = None,
         **kwargs: Any
     ) -> str:
         if action == "add":
+            if batch:
+                return self._add_jobs_batch(batch)
             return self._add_job(message, every_seconds, cron_expr, at, timezone, type)
         elif action == "list":
             return self._list_jobs()
         elif action == "remove":
             return self._remove_job(job_id)
         return f"Unknown action: {action}"
-    
-    def _add_job(
-        self, 
-        message: str, 
-        every_seconds: int | None, 
-        cron_expr: str | None,
-        at: str | None,
-        timezone: str | None,
-        type: str = "echo"
-    ) -> str:
-        if not message:
-            return "Error: message is required for add"
+
+    def _add_jobs_batch(self, batch: list[dict[str, Any]]) -> str:
+        """Add multiple jobs at once."""
         if not self._channel or not self._chat_id:
             return "Error: no session context (channel/chat_id)"
         
-        # Build schedule
+        jobs_data = []
+        for item in batch:
+            msg = item.get("message", "")
+            if not msg:
+                continue
+            
+            schedule = self._build_schedule(
+                item.get("every_seconds"),
+                item.get("cron_expr"),
+                item.get("at"),
+                item.get("timezone")
+            )
+            if isinstance(schedule, str): # Error message
+                return f"Error in job '{msg}': {schedule}"
+            
+            jobs_data.append({
+                "name": item.get("name", msg[:30]),
+                "schedule": schedule,
+                "message": msg,
+                "kind": item.get("type", "echo"),
+                "deliver": True,
+                "channel": self._channel,
+                "to": self._chat_id
+            })
+        
+        created = self._cron.add_jobs_batch(jobs_data)
+        return f"Created {len(created)} jobs successfully"
+
+    def _build_schedule(
+        self,
+        every_seconds: int | None,
+        cron_expr: str | None,
+        at: str | None,
+        timezone: str | None
+    ) -> CronSchedule | str:
+        """Helper to build schedule object."""
         if every_seconds:
-            schedule = CronSchedule(kind="every", every_ms=every_seconds * 1000)
+            return CronSchedule(kind="every", every_ms=every_seconds * 1000)
         elif cron_expr:
-            schedule = CronSchedule(kind="cron", expr=cron_expr, tz=timezone)
+            return CronSchedule(kind="cron", expr=cron_expr, tz=timezone)
         elif at:
             try:
                 import datetime
@@ -125,11 +171,29 @@ class CronTool(Tool):
                 
                 # Convert to UTC timestamp
                 at_ms = int(dt.timestamp() * 1000)
-                schedule = CronSchedule(kind="at", at_ms=at_ms, tz=timezone)
+                return CronSchedule(kind="at", at_ms=at_ms, tz=timezone)
             except Exception as e:
                 return f"Error parsing time: {e}"
         else:
             return "Error: either every_seconds, cron_expr, or at is required"
+
+    def _add_job(
+        self, 
+        message: str, 
+        every_seconds: int | None, 
+        cron_expr: str | None,
+        at: str | None,
+        timezone: str | None,
+        type: str = "echo"
+    ) -> str:
+        if not message:
+            return "Error: message is required for add"
+        if not self._channel or not self._chat_id:
+            return "Error: no session context (channel/chat_id)"
+        
+        schedule = self._build_schedule(every_seconds, cron_expr, at, timezone)
+        if isinstance(schedule, str):
+            return schedule
         
         job = self._cron.add_job(
             name=message[:30],

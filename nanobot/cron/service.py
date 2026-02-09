@@ -19,7 +19,8 @@ def _now_ms() -> int:
 def _compute_next_run(schedule: CronSchedule, now_ms: int) -> int | None:
     """Compute next run time in ms."""
     if schedule.kind == "at":
-        return schedule.at_ms if schedule.at_ms and schedule.at_ms > now_ms else None
+        # Fix: Return at_ms even if it is in the past (allow catch-up)
+        return schedule.at_ms
     
     if schedule.kind == "every":
         if not schedule.every_ms or schedule.every_ms <= 0:
@@ -77,6 +78,7 @@ class CronService:
         self._timer_task: asyncio.Task | None = None
         self._running = False
         self._running_jobs: set[str] = set()
+        self._lock = asyncio.Lock()  # Protect file access
     
     def _load_store(self) -> CronStore:
         """Load jobs from disk."""
@@ -319,33 +321,63 @@ class CronService:
         delete_after_run: bool = False,
     ) -> CronJob:
         """Add a new job."""
+        return self.add_jobs_batch([
+            {
+                "name": name,
+                "schedule": schedule,
+                "message": message,
+                "kind": kind,
+                "deliver": deliver,
+                "channel": channel,
+                "to": to,
+                "delete_after_run": delete_after_run
+            }
+        ])[0]
+
+    def add_jobs_batch(self, jobs_data: list[dict[str, Any]]) -> list[CronJob]:
+        """Add multiple jobs atomically."""
+        if not jobs_data:
+            return []
+
+        # We need to run this under lock, but since _load_store and _save_store are sync (file IO),
+        # and we want to prevent race conditions from other async tasks calling this method,
+        # we can't easily use async lock around sync methods without making them async.
+        # However, since this runs in a single-threaded event loop, the only race condition
+        # is between await points.
+        # But for correctness with future async I/O, we should use the lock if we make load/save async.
+        # For now, we rely on the fact that no awaits happen between load and save.
+        # Wait, if we use file lock, we need to ensure no other process touches it.
+        # Assuming single process nanobot.
+        
         store = self._load_store()
         now = _now_ms()
+        new_jobs = []
+
+        for data in jobs_data:
+            job = CronJob(
+                id=str(uuid.uuid4())[:8],
+                name=data["name"],
+                enabled=True,
+                schedule=data["schedule"],
+                payload=CronPayload(
+                    kind=data.get("kind", "agent_turn"),
+                    message=data["message"],
+                    deliver=data.get("deliver", False),
+                    channel=data.get("channel"),
+                    to=data.get("to"),
+                ),
+                state=CronJobState(next_run_at_ms=_compute_next_run(data["schedule"], now)),
+                created_at_ms=now,
+                updated_at_ms=now,
+                delete_after_run=data.get("delete_after_run", False),
+            )
+            new_jobs.append(job)
         
-        job = CronJob(
-            id=str(uuid.uuid4())[:8],
-            name=name,
-            enabled=True,
-            schedule=schedule,
-            payload=CronPayload(
-                kind=kind,
-                message=message,
-                deliver=deliver,
-                channel=channel,
-                to=to,
-            ),
-            state=CronJobState(next_run_at_ms=_compute_next_run(schedule, now)),
-            created_at_ms=now,
-            updated_at_ms=now,
-            delete_after_run=delete_after_run,
-        )
-        
-        store.jobs.append(job)
+        store.jobs.extend(new_jobs)
         self._save_store()
-        # self._arm_timer() # Removed as it is not defined and heartbeat loop handles scheduling
         
-        logger.info(f"Cron: added job '{name}' ({job.id})")
-        return job
+        logger.info(f"Cron: added {len(new_jobs)} jobs batch")
+        return new_jobs
     
     def remove_job(self, job_id: str) -> bool:
         """Remove a job by ID."""

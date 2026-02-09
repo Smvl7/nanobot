@@ -152,7 +152,7 @@ Examples:
             })
         
         created = await self._cron.add_jobs_batch(jobs_data)
-        return f"Created {len(created)} jobs successfully"
+        return f"Created {len(created)} jobs successfully. I have scheduled all tasks. I will now stop."
 
     def _build_schedule(
         self,

@@ -114,6 +114,17 @@
     "exec": {
       "timeout": 60
     },
-    "restrict_to_workspace": false
+    "restrict_to_workspace": false,
+    "allow_file_ops": true,
+    "allow_shell": false
+  },
+  "stt": {
+    "provider": "groq",
+    "api_key": "YOUR_GROQ_API_KEY"
+  },
+  "llm": {
+    "provider": "google",
+    "api_key": "YOUR_GOOGLE_API_KEY",
+    "model": "gemini-2.0-flash-exp"
   }
 }

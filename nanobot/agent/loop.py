@@ -42,8 +42,8 @@ class AgentLoop:
         workspace: Path,
         model: str | None = None,
         max_iterations: int = 20,
-        max_history_messages: int = 50,
-        max_history_tokens: int = 6000,
+        max_history_messages: int = 100,
+        max_history_tokens: int = 150000,
         brave_api_key: str | None = None,
         exec_config: "ExecToolConfig | None" = None,
         cron_service: "CronService | None" = None,
@@ -278,7 +278,8 @@ class AgentLoop:
                     for tc in response.tool_calls
                 ]
                 messages = self.context.add_assistant_message(
-                    messages, response.content, tool_call_dicts
+                    messages, response.content, tool_call_dicts,
+                    reasoning_content=response.reasoning_content,
                 )
                 
                 # Execute tools
@@ -309,7 +310,8 @@ class AgentLoop:
         return OutboundMessage(
             channel=msg.channel,
             chat_id=msg.chat_id,
-            content=final_content
+            content=final_content,
+            metadata=msg.metadata or {},  # Pass through for channel-specific needs (e.g. Slack thread_ts)
         )
     
     async def _process_system_message(self, msg: InboundMessage) -> OutboundMessage | None:
@@ -409,7 +411,8 @@ class AgentLoop:
                     for tc in response.tool_calls
                 ]
                 messages = self.context.add_assistant_message(
-                    messages, response.content, tool_call_dicts
+                    messages, response.content, tool_call_dicts,
+                    reasoning_content=response.reasoning_content,
                 )
                 
                 for tool_call in response.tool_calls:

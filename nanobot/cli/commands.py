@@ -55,6 +55,18 @@ def onboard():
     
     # Create default config
     config = Config()
+    
+    # Ask for timezone
+    try:
+        # Try to guess local timezone
+        import datetime
+        local_tz = datetime.datetime.now().astimezone().tzinfo.key
+    except:
+        local_tz = "UTC"
+        
+    user_tz = typer.prompt("Your timezone (e.g. Europe/Moscow)", default=local_tz)
+    config.agents.defaults.timezone = user_tz
+    
     save_config(config)
     console.print(f"[green]✓[/green] Created config at {config_path}")
     
@@ -88,6 +100,20 @@ You are a helpful AI assistant. Be concise, accurate, and friendly.
 - Ask for clarification when the request is ambiguous
 - Use tools to help accomplish tasks
 - Remember important information in your memory files
+
+## CRITICAL PROTOCOLS
+
+### Scheduled Reminders (Cron)
+When creating reminders or scheduled tasks, you MUST follow these rules:
+
+1. **Use Echo Mode for Text**: If the task is just to send a text (e.g., "Remind me to drink water"), use `--kind echo`. Do NOT use the default agent mode.
+2. **Mandatory Delivery Params**: You MUST specify `--deliver`, `--to`, and `--channel`.
+3. **Timezone Awareness**: ALWAYS specify `--timezone` matching the user's preference (or default to their config). Do NOT calculate UTC manually unless forced.
+
+**Correct Example:**
+```bash
+nanobot cron add --name "water_reminder" --message "Time to drink water! 💧" --kind echo --every 3600 --deliver --to <USER_ID> --channel telegram --timezone "Europe/Moscow"
+```
 """,
         "SOUL.md": """# Soul
 
@@ -159,6 +185,7 @@ def _make_provider(config):
     return LiteLLMProvider(
         api_key=p.api_key if p else None,
         api_base=config.get_api_base(),
+        provider_name=config.get_provider_name(),
         default_model=model,
         extra_headers=p.extra_headers if p else None,
     )
@@ -171,10 +198,12 @@ def _make_provider(config):
 
 async def execute_cron_job(job, bus, agent) -> str | None:
     """Execute a cron job through the agent."""
+    from nanobot.bus.events import OutboundMessage
+    from loguru import logger
+
     # Echo mode: just send message, don't trigger agent
     if job.payload.kind == "echo":
         if job.payload.to:
-            from nanobot.bus.events import OutboundMessage
             await bus.publish_outbound(OutboundMessage(
                 channel=job.payload.channel or "cli",
                 chat_id=job.payload.to,
@@ -182,19 +211,31 @@ async def execute_cron_job(job, bus, agent) -> str | None:
             ))
         return job.payload.message
 
+    # Agent turn mode
     response = await agent.process_direct(
         job.payload.message,
         session_key=f"cron:{job.id}",
         channel=job.payload.channel or "cli",
         chat_id=job.payload.to or "direct",
     )
+    
     if job.payload.deliver and job.payload.to:
-        from nanobot.bus.events import OutboundMessage
-        await bus.publish_outbound(OutboundMessage(
-            channel=job.payload.channel or "cli",
-            chat_id=job.payload.to,
-            content=response or ""
-        ))
+        if response and response.strip():
+            await bus.publish_outbound(OutboundMessage(
+                channel=job.payload.channel or "cli",
+                chat_id=job.payload.to,
+                content=response
+            ))
+        else:
+            logger.warning(f"Cron: job {job.id} produced empty response, skipping delivery")
+            # Send fallback message to user
+            await bus.publish_outbound(OutboundMessage(
+                channel=job.payload.channel or "cli",
+                chat_id=job.payload.to,
+                content="⚠️ Agent produced empty response."
+            ))
+            raise ValueError("Agent produced empty response for delivery job")
+            
     return response
 
 
@@ -305,7 +346,7 @@ def agent(
     session_id: str = typer.Option("cli:default", "--session", "-s", help="Session ID"),
 ):
     """Interact with the agent directly."""
-    from nanobot.config.loader import load_config
+    from nanobot.config.loader import load_config, get_data_dir
     from nanobot.bus.queue import MessageBus
     from nanobot.agent.loop import AgentLoop
     
@@ -314,13 +355,20 @@ def agent(
     bus = MessageBus()
     provider = _make_provider(config)
     
+    # Initialize CronService for the agent
+    from nanobot.cron.service import CronService
+    store_path = get_data_dir() / "cron" / "jobs.json"
+    cron_service = CronService(store_path)
+
     agent_loop = AgentLoop(
         bus=bus,
         provider=provider,
         workspace=config.workspace_path,
         max_history_messages=config.agents.defaults.max_history_messages,
+        max_history_tokens=config.agents.defaults.max_history_tokens,
         brave_api_key=config.tools.web.search.api_key or None,
         exec_config=config.tools.exec,
+        cron_service=cron_service,
         restrict_to_workspace=config.tools.restrict_to_workspace,
     )
     
@@ -540,21 +588,87 @@ def cron_add(
     deliver: bool = typer.Option(False, "--deliver", "-d", help="Deliver response to channel"),
     to: str = typer.Option(None, "--to", help="Recipient for delivery"),
     channel: str = typer.Option(None, "--channel", help="Channel for delivery (e.g. 'telegram', 'whatsapp')"),
+    timezone: str = typer.Option(None, "--timezone", "-tz", help="Timezone for cron schedule (e.g. Europe/Moscow)"),
+    kind: str = typer.Option("agent_turn", "--kind", "-k", help="Job type: 'agent_turn' or 'echo'"),
 ):
-    """Add a scheduled job."""
-    from nanobot.config.loader import get_data_dir
+    """
+    Add a scheduled job.
+
+    CRITICAL:
+    - Use --kind echo for simple text reminders. This is fast and non-blocking.
+    - Use --kind agent_turn ONLY if you need the agent to think, use tools, or fetch data. This is slow.
+
+    Examples:
+        # Simple reminder (Echo mode) - PREFERRED for text
+        nanobot cron add -n "water" -m "Drink water" --kind echo --every 3600 --deliver --to <ID> --channel telegram
+
+        # Agent task (Agent mode) - Use sparingly
+        nanobot cron add -n "news" -m "Summarize today news" --cron "0 9 * * *" --deliver --to <ID> --channel whatsapp --timezone "Europe/Moscow"
+    """
+    from nanobot.config.loader import get_data_dir, load_config, save_config
     from nanobot.cron.service import CronService
     from nanobot.cron.types import CronSchedule
+    
+    # 1. Validate Delivery Params
+    if deliver:
+        if not to or not channel:
+            console.print("[red]Error: --deliver requires --to and --channel[/red]")
+            raise typer.Exit(1)
+
+    # 2. Timezone Resolution
+    config = load_config()
+    final_tz = "UTC" # Fallback
+
+    # Priority 1: Explicit CLI argument
+    if timezone:
+        final_tz = timezone
+    
+    # Priority 2: Configured default
+    elif config.agents.defaults.timezone:
+        final_tz = config.agents.defaults.timezone
+        
+    # Priority 3: Interactive Setup (Auto-onboarding)
+    elif cron_expr or at: # Only needed for time-based schedules
+        import datetime
+        try:
+            local_tz = datetime.datetime.now().astimezone().tzinfo.key
+        except:
+            local_tz = "UTC"
+            
+        console.print(f"[yellow]Timezone not configured.[/yellow]")
+        if typer.confirm(f"Use system timezone '{local_tz}'?", default=True):
+            final_tz = local_tz
+            # Auto-save for future
+            if typer.confirm("Save as default?", default=True):
+                config.agents.defaults.timezone = final_tz
+                save_config(config)
+                console.print(f"[green]✓[/green] Saved default timezone: {final_tz}")
+        else:
+            final_tz = typer.prompt("Enter timezone (e.g. Europe/Moscow)", default="UTC")
+            if typer.confirm("Save as default?", default=True):
+                config.agents.defaults.timezone = final_tz
+                save_config(config)
+                console.print(f"[green]✓[/green] Saved default timezone: {final_tz}")
     
     # Determine schedule type
     if every:
         schedule = CronSchedule(kind="every", every_ms=every * 1000)
     elif cron_expr:
-        schedule = CronSchedule(kind="cron", expr=cron_expr)
+        schedule = CronSchedule(kind="cron", expr=cron_expr, tz=final_tz)
     elif at:
         import datetime
-        dt = datetime.datetime.fromisoformat(at)
-        schedule = CronSchedule(kind="at", at_ms=int(dt.timestamp() * 1000))
+        from zoneinfo import ZoneInfo
+        # Parse AT with timezone awareness if possible
+        try:
+            dt = datetime.datetime.fromisoformat(at)
+            if dt.tzinfo is None and final_tz != "UTC":
+                 # If naive time provided, assume it's in final_tz
+                 tz = ZoneInfo(final_tz)
+                 dt = dt.replace(tzinfo=tz)
+            schedule = CronSchedule(kind="at", at_ms=int(dt.timestamp() * 1000))
+        except Exception as e:
+             console.print(f"[red]Error parsing time: {e}[/red]")
+             raise typer.Exit(1)
     else:
         console.print("[red]Error: Must specify --every, --cron, or --at[/red]")
         raise typer.Exit(1)
@@ -566,12 +680,17 @@ def cron_add(
         name=name,
         schedule=schedule,
         message=message,
+        kind=kind,
         deliver=deliver,
         to=to,
         channel=channel,
     )
     
     console.print(f"[green]✓[/green] Added job '{job.name}' ({job.id})")
+    if cron_expr:
+        console.print(f"  Schedule: {cron_expr} ({final_tz})")
+    if kind == "echo":
+        console.print("  Type: Echo (direct message)")
 
 
 @cron_app.command("remove")

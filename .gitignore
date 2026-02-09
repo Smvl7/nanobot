@@ -17,11 +17,11 @@ docs/
 __pycache__/
 poetry.lock
 .pytest_cache/
-
-# User specific
+botpy.log
 config.json
-.ssh/
-.trae/
-.vscode/
 nanobot_workspace/
+tests/temp_workspace/
+.trae/
+.ssh/
+.vscode/
 logs/

@@ -106,9 +106,10 @@ You are a helpful AI assistant. Be concise, accurate, and friendly.
 ### Scheduled Reminders (Cron)
 When creating reminders or scheduled tasks, you MUST follow these rules:
 
-1. **Use Echo Mode for Text**: If the task is just to send a text (e.g., "Remind me to drink water"), use `--kind echo`. Do NOT use the default agent mode.
+1. **Use Echo Mode for Text (MANDATORY)**: If the task is just to send a text (e.g., "Remind me to drink water"), use `--kind echo`. Do NOT use the default agent mode. This is faster and reliable.
 2. **Mandatory Delivery Params**: You MUST specify `--deliver`, `--to`, and `--channel`.
-3. **Timezone Awareness**: ALWAYS specify `--timezone` matching the user's preference (or default to their config). Do NOT calculate UTC manually unless forced.
+3. **Timezone Awareness**: ALWAYS specify `--timezone` matching the user's preference.
+4. **Agent Mode Rules**: Use `--kind agent_turn` ONLY for complex logic. If using Agent Mode, **return the result as your final answer**. Do NOT use `send_message` tool for the main result.
 
 **Correct Example:**
 ```bash
@@ -595,14 +596,14 @@ def cron_add(
     Add a scheduled job.
 
     CRITICAL:
-    - Use --kind echo for simple text reminders. This is fast and non-blocking.
-    - Use --kind agent_turn ONLY if you need the agent to think, use tools, or fetch data. This is slow.
+    - Use --kind echo for ALL simple text reminders (e.g. "Drink water", "Call Dad"). This is reliable and prevents duplicate notifications.
+    - Use --kind agent_turn ONLY if you need the agent to perform a task (e.g. "Check weather", "Summarize news"). The agent's final response will be sent as the notification.
 
     Examples:
-        # Simple reminder (Echo mode) - PREFERRED for text
+        # Simple reminder (Echo mode) - MANDATORY for text
         nanobot cron add -n "water" -m "Drink water" --kind echo --every 3600 --deliver --to <ID> --channel telegram
 
-        # Agent task (Agent mode) - Use sparingly
+        # Agent task (Agent mode) - Use ONLY for logic
         nanobot cron add -n "news" -m "Summarize today news" --cron "0 9 * * *" --deliver --to <ID> --channel whatsapp --timezone "Europe/Moscow"
     """
     from nanobot.config.loader import get_data_dir, load_config, save_config

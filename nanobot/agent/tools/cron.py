@@ -26,7 +26,7 @@ class CronTool(Tool):
     
     @property
     def description(self) -> str:
-        return "Schedule tasks. Use 'echo' type for simple text reminders (sent directly to chat). Use 'agent' type for tasks requiring tool use or reasoning (e.g. 'check weather'). Actions: add, list, remove."
+        return "Schedule tasks/reminders. CRITICAL: For simple reminders (e.g. 'Remind me to drink water'), YOU MUST USE type='echo'. This sends the text directly. Do NOT use 'agent' for reminders. Only use 'agent' for complex tasks (e.g. 'Check stock price')."
     
     @property
     def parameters(self) -> dict[str, Any]:
@@ -41,7 +41,7 @@ class CronTool(Tool):
                 "type": {
                     "type": "string",
                     "enum": ["echo", "agent"],
-                    "description": "Job type: 'echo' for reminders (loudspeaker), 'agent' for tasks. Defaults to 'echo'."
+                    "description": "Job type. 'echo': DIRECT MESSAGE. Use for ALL text reminders/notifications. 'agent': AI TASK. Starts a full agent session (slow). Use only if you need the agent to think/act."
                 },
                 "message": {
                     "type": "string",

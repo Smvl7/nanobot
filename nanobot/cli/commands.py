@@ -346,7 +346,7 @@ def agent(
     session_id: str = typer.Option("cli:default", "--session", "-s", help="Session ID"),
 ):
     """Interact with the agent directly."""
-    from nanobot.config.loader import load_config
+    from nanobot.config.loader import load_config, get_data_dir
     from nanobot.bus.queue import MessageBus
     from nanobot.agent.loop import AgentLoop
     
@@ -355,13 +355,20 @@ def agent(
     bus = MessageBus()
     provider = _make_provider(config)
     
+    # Initialize CronService for the agent
+    from nanobot.cron.service import CronService
+    store_path = get_data_dir() / "cron" / "jobs.json"
+    cron_service = CronService(store_path)
+
     agent_loop = AgentLoop(
         bus=bus,
         provider=provider,
         workspace=config.workspace_path,
         max_history_messages=config.agents.defaults.max_history_messages,
+        max_history_tokens=config.agents.defaults.max_history_tokens,
         brave_api_key=config.tools.web.search.api_key or None,
         exec_config=config.tools.exec,
+        cron_service=cron_service,
         restrict_to_workspace=config.tools.restrict_to_workspace,
     )
     
@@ -587,13 +594,15 @@ def cron_add(
     """
     Add a scheduled job.
 
+    CRITICAL:
+    - Use --kind echo for simple text reminders. This is fast and non-blocking.
+    - Use --kind agent_turn ONLY if you need the agent to think, use tools, or fetch data. This is slow.
+
     Examples:
-        # Simple reminder (Echo mode)
-        # Use this for simple text notifications.
+        # Simple reminder (Echo mode) - PREFERRED for text
         nanobot cron add -n "water" -m "Drink water" --kind echo --every 3600 --deliver --to <ID> --channel telegram
 
-        # Agent task (Agent mode)
-        # Use this when the agent needs to think or use tools.
+        # Agent task (Agent mode) - Use sparingly
         nanobot cron add -n "news" -m "Summarize today news" --cron "0 9 * * *" --deliver --to <ID> --channel whatsapp --timezone "Europe/Moscow"
     """
     from nanobot.config.loader import get_data_dir, load_config, save_config

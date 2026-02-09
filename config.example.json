@@ -8,11 +8,6 @@
     "telegram": {
       "token": "YOUR_TELEGRAM_BOT_TOKEN",
       "admin_id": 123456789
-    },
-    "dingtalk": {
-      "enabled": false,
-      "client_id": "YOUR_CLIENT_ID",
-      "client_secret": "YOUR_CLIENT_SECRET"
     }
   },
   "tools": {

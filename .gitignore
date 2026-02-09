@@ -20,3 +20,6 @@ poetry.lock
 botpy.log
 config.json
 nanobot_workspace/
+tests/temp_workspace/
+.trae/
+.ssh/

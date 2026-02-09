@@ -64,6 +64,8 @@ class AgentDefaults(BaseModel):
     max_tokens: int = 8192
     temperature: float = 0.7
     max_tool_iterations: int = 20
+    max_history_messages: int = 100
+    max_history_tokens: int = 100000
 
 
 class AgentsConfig(BaseModel):

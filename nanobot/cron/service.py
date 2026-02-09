@@ -76,6 +76,7 @@ class CronService:
         self._store: CronStore | None = None
         self._timer_task: asyncio.Task | None = None
         self._running = False
+        self._running_jobs: set[str] = set()
     
     def _load_store(self) -> CronStore:
         """Load jobs from disk."""
@@ -254,13 +255,16 @@ class CronService:
         if due_jobs:
             logger.info(f"Cron: found {len(due_jobs)} due jobs")
             for job in due_jobs:
-                await self._execute_job(job)
-            
-            self._save_store()
+                if job.id in self._running_jobs:
+                    logger.warning(f"Cron: job '{job.name}' ({job.id}) is already running, skipping")
+                    continue
+                # Run concurrently
+                asyncio.create_task(self._execute_job(job))
 
 
     async def _execute_job(self, job: CronJob) -> None:
         """Execute a single job."""
+        self._running_jobs.add(job.id)
         start_ms = _now_ms()
         logger.info(f"Cron: executing job '{job.name}' ({job.id})")
         
@@ -291,6 +295,9 @@ class CronService:
         else:
             # Compute next run
             job.state.next_run_at_ms = _compute_next_run(job.schedule, _now_ms())
+        
+        self._running_jobs.discard(job.id)
+        self._save_store()
     
     # ========== Public API ==========
     
@@ -335,7 +342,7 @@ class CronService:
         
         store.jobs.append(job)
         self._save_store()
-        self._arm_timer()
+        # self._arm_timer() # Removed as it is not defined and heartbeat loop handles scheduling
         
         logger.info(f"Cron: added job '{name}' ({job.id})")
         return job
@@ -376,7 +383,7 @@ class CronService:
                 if not force and not job.enabled:
                     return False
                 await self._execute_job(job)
-                self._save_store()
+                # self._save_store() # Already called in _execute_job
                 return True
         return False
     

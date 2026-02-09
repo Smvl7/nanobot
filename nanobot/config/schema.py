@@ -47,6 +47,57 @@ class DiscordConfig(BaseModel):
     intents: int = 37377  # GUILDS + GUILD_MESSAGES + DIRECT_MESSAGES + MESSAGE_CONTENT
 
 
+class EmailConfig(BaseModel):
+    """Email channel configuration."""
+    enabled: bool = False
+    imap_host: str = ""
+    imap_port: int = 993
+    imap_username: str = ""
+    imap_password: str = ""
+    imap_use_ssl: bool = True
+    imap_mailbox: str = "INBOX"
+    
+    smtp_host: str = ""
+    smtp_port: int = 465
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_use_ssl: bool = True
+    smtp_use_tls: bool = False
+    
+    poll_interval_seconds: int = 60
+    consent_granted: bool = False
+    auto_reply_enabled: bool = False
+    from_address: str = ""
+    subject_prefix: str = "Re: "
+    mark_seen: bool = True
+    max_body_chars: int = 100000
+
+
+class QQConfig(BaseModel):
+    """QQ channel configuration."""
+    enabled: bool = False
+    app_id: str = ""
+    secret: str = ""
+    allow_from: list[str] = Field(default_factory=list)
+
+
+class SlackDMConfig(BaseModel):
+    enabled: bool = False
+    policy: str = "allowlist"
+    allow_from: list[str] = Field(default_factory=list)
+
+
+class SlackConfig(BaseModel):
+    """Slack channel configuration using Socket Mode."""
+    enabled: bool = False
+    bot_token: str = ""
+    app_token: str = ""
+    mode: str = "socket"
+    dm: SlackDMConfig = Field(default_factory=SlackDMConfig)
+    group_policy: str = "mention"
+    group_allow_from: list[str] = Field(default_factory=list)
+
+
 class ChannelsConfig(BaseModel):
     """Configuration for chat channels."""
     whatsapp: WhatsAppConfig = Field(default_factory=WhatsAppConfig)
@@ -54,6 +105,9 @@ class ChannelsConfig(BaseModel):
     discord: DiscordConfig = Field(default_factory=DiscordConfig)
     feishu: FeishuConfig = Field(default_factory=FeishuConfig)
     dingtalk: DingTalkConfig = Field(default_factory=DingTalkConfig)
+    email: EmailConfig = Field(default_factory=EmailConfig)
+    qq: QQConfig = Field(default_factory=QQConfig)
+    slack: SlackConfig = Field(default_factory=SlackConfig)
 
 
 class AgentDefaults(BaseModel):

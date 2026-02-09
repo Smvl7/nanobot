@@ -421,7 +421,7 @@ class CronService:
                 return True
         return False
     
-    async def status(self) -> dict:
+    def status(self) -> dict:
         """Get service status."""
         store = self._load_store()
         return {

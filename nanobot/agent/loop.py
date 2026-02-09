@@ -145,12 +145,13 @@ class AgentLoop:
         self._running = False
         logger.info("Agent loop stopping")
     
-    async def _process_message(self, msg: InboundMessage) -> OutboundMessage | None:
+    async def _process_message(self, msg: InboundMessage, excluded_tools: list[str] | None = None) -> OutboundMessage | None:
         """
         Process a single inbound message.
         
         Args:
             msg: The inbound message to process.
+            excluded_tools: Optional list of tool names to hide from the agent.
         
         Returns:
             The response message, or None if no response needed.
@@ -196,9 +197,13 @@ class AgentLoop:
             iteration += 1
             
             # Call LLM
+            tools = self.tools.get_definitions()
+            if excluded_tools:
+                tools = [t for t in tools if t["function"]["name"] not in excluded_tools]
+            
             response = await self.provider.chat(
                 messages=messages,
-                tools=self.tools.get_definitions(),
+                tools=tools,
                 model=self.model
             )
             
@@ -358,6 +363,7 @@ class AgentLoop:
         session_key: str = "cli:direct",
         channel: str = "cli",
         chat_id: str = "direct",
+        excluded_tools: list[str] | None = None,
     ) -> str:
         """
         Process a message directly (for CLI or cron usage).
@@ -367,6 +373,7 @@ class AgentLoop:
             session_key: Session identifier.
             channel: Source channel (for context).
             chat_id: Source chat ID (for context).
+            excluded_tools: Optional list of tools to hide.
         
         Returns:
             The agent's response.
@@ -378,5 +385,5 @@ class AgentLoop:
             content=content
         )
         
-        response = await self._process_message(msg)
+        response = await self._process_message(msg, excluded_tools=excluded_tools)
         return response.content if response else ""

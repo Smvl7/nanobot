@@ -110,6 +110,7 @@ When creating reminders or scheduled tasks, you MUST follow these rules:
 2. **Mandatory Delivery Params**: You MUST specify `--deliver`, `--to`, and `--channel`.
 3. **Timezone Awareness**: ALWAYS specify `--timezone` matching the user's preference.
 4. **Agent Mode Rules**: Use `--kind agent_turn` ONLY for complex logic. If using Agent Mode, **return the result as your final answer**. Do NOT use `send_message` tool for the main result.
+5. **Batch Jobs**: When using `add_jobs_batch`, STOP immediately after the tool call returns success. Do NOT verify the jobs.
 
 **Correct Example:**
 ```bash
@@ -213,11 +214,18 @@ async def execute_cron_job(job, bus, agent) -> str | None:
         return job.payload.message
 
     # Agent turn mode
+    # Use strict instruction since we removed the message tool
+    instruction = (
+        f"Execute this scheduled task: {job.payload.message}\n"
+        "Return the result as text."
+    )
+    
     response = await agent.process_direct(
-        job.payload.message,
+        instruction,
         session_key=f"cron:{job.id}",
         channel=job.payload.channel or "cli",
         chat_id=job.payload.to or "direct",
+        excluded_tools=["message"],
     )
     
     if job.payload.deliver and job.payload.to:

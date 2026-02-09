@@ -14,7 +14,10 @@ from loguru import logger
 # Disable logger for cleaner output
 logger.remove()
 
-async def run_test():
+import pytest
+
+@pytest.mark.asyncio
+async def test_cron_echo_creation():
     print("🚀 Starting Cron Echo Fix Verification Test...")
 
     # 1. Setup paths

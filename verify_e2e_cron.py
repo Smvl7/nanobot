@@ -110,8 +110,8 @@ async def run_e2e_verification():
     print(f"\n🤖 AGENT INITIAL RESPONSE:\n{response}\n")
     
     # 3. Wait for execution
-    print("⏳ Waiting 45 seconds for tasks to fire...")
-    for i in range(45):
+    print("⏳ Waiting 90 seconds for tasks to fire...")
+    for i in range(90):
         sys.stdout.write(f".")
         sys.stdout.flush()
         await asyncio.sleep(1)
@@ -120,29 +120,40 @@ async def run_e2e_verification():
     # 4. Verify Results
     print("\n=== VERIFICATION REPORT ===")
     
-    echo_water = any("попить воды" in m[1].lower() or "drink water" in m[1].lower() for m in MESSAGES if "[ECHO]" in m[1] or "water" in m[1].lower())
-    agent_weather = any("london" in m[1].lower() or "лондон" in m[1].lower() for m in MESSAGES)
-    echo_mom = any("маме" in m[1].lower() or "mom" in m[1].lower() for m in MESSAGES)
+    # Filter messages to exclude initial response (simplistic check)
+    task_messages = [m[1] for m in MESSAGES if "напоминания" not in m[1]]
     
-    # Check for duplicates (spam)
-    # We count how many messages contain "London"/Weather
-    weather_msgs = [m[1] for m in MESSAGES if "london" in m[1].lower() or "лондон" in m[1].lower()]
-    unique_weather = len(set(weather_msgs))
-    total_weather = len(weather_msgs)
+    echo_water = [m for m in task_messages if "попить воды" in m.lower()]
+    agent_weather = [m for m in task_messages if "лондон" in m.lower() or "london" in m.lower()]
+    echo_mom = [m for m in task_messages if "маме" in m.lower()]
     
-    if echo_water: print("✅ Water Reminder (Echo): RECEIVED")
-    else: print("❌ Water Reminder (Echo): MISSING")
+    # Reporting
+    print(f"Total Messages Captured: {len(task_messages)}")
     
-    if echo_mom: print("✅ Mom Reminder (Echo): RECEIVED")
-    else: print("❌ Mom Reminder (Echo): MISSING")
-    
-    if agent_weather: print(f"✅ Weather (Agent): RECEIVED ({total_weather} times)")
-    else: print("❌ Weather (Agent): MISSING")
-    
-    if total_weather > 2: # We expect 2 weather tasks (at 10s and 15s)
-        print(f"⚠️ POTENTIAL SPAM: Received {total_weather} weather messages. Expected 2.")
+    if len(echo_water) == 1:
+        print(f"✅ Water Reminder: RECEIVED ONCE (Correct)")
     else:
-        print("✅ No Spam Detected.")
+        print(f"❌ Water Reminder: Expected 1, got {len(echo_water)}")
+
+    if len(echo_mom) == 1:
+        print(f"✅ Mom Reminder: RECEIVED ONCE (Correct)")
+    else:
+        print(f"❌ Mom Reminder: Expected 1, got {len(echo_mom)}")
+
+    # Weather: we asked for 2 separate weather tasks (10s and 15s)
+    # They might produce identical output, so we check count
+    if len(agent_weather) == 2:
+        print(f"✅ Weather Tasks: RECEIVED 2 TIMES (Correct)")
+    elif len(agent_weather) > 2:
+        print(f"❌ Weather Tasks: SPAM DETECTED (Got {len(agent_weather)})")
+    else:
+        print(f"⚠️ Weather Tasks: Incomplete (Got {len(agent_weather)}) - maybe timeout?")
+
+    # Final Verdict
+    if len(echo_water) == 1 and len(echo_mom) == 1 and len(agent_weather) == 2:
+        print("\n✅✅✅ TEST PASSED: ALL TASKS FIRED EXACTLY ONCE ✅✅✅")
+    else:
+        print("\n❌❌❌ TEST FAILED: INCORRECT MESSAGE COUNTS ❌❌❌")
 
     # Cleanup
     cron_service.stop()
